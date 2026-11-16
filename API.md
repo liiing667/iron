@@ -141,6 +141,23 @@ It is recommended to combine password id with the `ttl` option to generate **iro
 strings of limited time validity which also allow for rotating passwords without the need to keep
 all previous passwords around (only the number of passwords used within the ttl window).
 
+For explicit key rotation, pass a `Keyring` instead. It keeps the password used to seal new
+objects (`current`) together with the historical passwords still accepted when unsealing, each
+keyed by its id:
+
+```javascript
+const keyring = new Iron.Keyring({
+    '1': oldPassword,                      // Historical key, still accepted on unseal
+    '2': newPassword                       // Any other current or historical key
+}, '2');                                  // Id of the key used by seal()
+
+const sealed = await Iron.seal(object, keyring, Iron.defaults);
+const unsealed = await Iron.unseal(sealed, keyring, Iron.defaults);
+```
+
+On `unseal()`, the id embedded in the protocol string selects the matching key. An unknown id
+fails closed with the same error as any other unauthenticated failure.
+
 ### `await unseal(sealed, password, options)`
 
 Verifies, decrypts, and reconstruct an **iron** protocol string into an object where:
@@ -168,6 +185,54 @@ Return value: the verified, decripted object.
 Note: In order to enable password rotation, the `password` argument can accept an object with more
 than one password, each keyed by its id. Together with the `ttl` option, the `password` object only
 needs to include the passwords used within the ttl window.
+
+The `password` argument can also be a `Keyring` (see [`seal()`](#await-sealobject-password-options)),
+which makes the current sealing key explicit while accepting every historical key on unseal.
+
+#### Unseal validation order and errors
+
+`unseal()` validates inputs in an order that avoids leaking information about forged or malformed
+seals:
+
+- the sealed string must be a string of exactly 8 `*`-separated components and each component is
+  checked against the character set produced by `seal()` (the component split is bounded);
+- the key referenced by the embedded password id is then resolved, failing closed when the id is
+  unknown;
+- the HMAC is verified before the expiration is examined, so an expired but otherwise valid seal
+  is only reported once its authenticity has been established;
+- only an authenticated seal can produce `Expired seal`.
+
+Every failure that happens before the MAC is verified (malformed structure, wrong prefix, unknown
+password id, bad HMAC, undecryptable payload) rejects with the same Boom error
+`Invalid seal` (HTTP 400). A machine-readable reason is exposed on `err.data.code`
+(`malformed`, `unknown_id`, `bad_mac`, or `bad_payload`) for legitimate callers, while the
+uniform message prevents callers without the right keys from distinguishing a forged seal from an
+expired one or from a seal produced with an old, no longer trusted key.
+
+### `new Keyring(passwords, [current])`
+
+Holds the current sealing password and the historical passwords still accepted by `unseal()` where:
+
+- `passwords` - one of:
+
+    - a password string or key buffer, stored under the `default` id;
+
+    - a password object with `id` and `secret` (or `encryption`/`integrity`), stored as a single
+      entry;
+
+    - an object hash of password id to any accepted password value (string, buffer,
+      `{ secret }`, or `{ encryption, integrity }`).
+
+- `current` - optional id of the entry used by `seal()`. Defaults to the `default` entry when
+  present, otherwise to the first entry. An unknown id throws.
+
+Properties and methods:
+
+- `keyring.id` - the id of the current sealing key.
+- `keyring.current` - the normalized `{ encryption, integrity }` password used by `seal()`.
+- `keyring.resolve(id)` - returns the normalized password for an embedded id, or rejects with the
+  uniform `Invalid seal` error (`err.data.code === 'unknown_id'`) when the id is not in the
+  keyring.
 
 ### `await generateKey(password, options)`
 

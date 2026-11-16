@@ -127,3 +127,24 @@ Iron.encrypt(password, options, 'hello')
 //expect.error(Iron.unseal('uuddlrlrbabas', password, options))
 //expect.error(Iron.unseal('uuddlrlrbabas', 256, defaults))
 expect.error(Iron.unseal(256, password))
+
+
+// Keyring
+
+const keyring = new Iron.Keyring({
+    '1': password,
+    '2': buffer
+}, '2');
+
+expect.type<string>(keyring.id)
+expect.type<{ id?: string, encryption: Iron.Password, integrity: Iron.Password }>(keyring.current)
+expect.type<{ id?: string, encryption: Iron.Password, integrity: Iron.Password }>(keyring.resolve('1'))
+
+Iron.seal('seal_this_string', keyring, defaults)
+expect.type<object>(await Iron.unseal(await Iron.seal('seal_this_string', keyring, defaults), keyring, defaults))
+
+const single = new Iron.Keyring(password);
+const fromObject = new Iron.Keyring({ id: '3', secret: password });
+
+expect.error(new Iron.Keyring(256))
+expect.error(Iron.seal('seal_this_string', 256, defaults))

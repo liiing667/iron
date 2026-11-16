@@ -110,7 +110,7 @@ export interface HMacResult {
 /**
 Password secret string or buffer.
 */
-type Password = string | Buffer
+export type Password = string | Buffer
 
 
 declare namespace password {
@@ -145,6 +145,44 @@ declare namespace password {
 The default encryption and integrity settings.
 */
 export const defaults: SealOptions;
+
+
+/**
+Explicit keyring holding the current sealing password and the historical
+passwords still accepted when unsealing.
+*/
+export class Keyring {
+
+    /**
+    @param passwords - A single password, a password object with an id, or a hash of password id to password value.
+    @param current - Optional id of the password used to seal; defaults to the `default` entry or the first password.
+    */
+    constructor(passwords: Password | password.Secret | password.Specific | password.Hash, current?: string);
+
+    /**
+    The id of the password used when sealing.
+    */
+    readonly id: string;
+
+    /**
+    The normalized password used when sealing.
+    */
+    readonly current: {
+        id?: string,
+        encryption: Password,
+        integrity: Password
+    };
+
+    /**
+    Resolves the password associated with the id embedded in a sealed string,
+    failing closed when the id is not part of the keyring.
+    */
+    resolve(id: string): {
+        id?: string,
+        encryption: Password,
+        integrity: Password
+    };
+}
 
 
 /**
@@ -221,7 +259,7 @@ Serializes, encrypts, and signs objects into an iron protocol string
 
 @returns Iron sealed string
 */
-export function seal(object: any, password: Password | password.Secret | password.Specific, options: SealOptions): Promise<string>
+export function seal(object: any, password: Password | password.Secret | password.Specific | Keyring, options: SealOptions): Promise<string>
 
 
 /**
@@ -233,4 +271,4 @@ Verifies, decrypts, and reconstruct an iron protocol string into an object
 
 @returns the verified decrypted object
 */
-export function unseal(sealed: string, password: Password | password.Hash, options?: SealOptions): Promise<any>
+export function unseal(sealed: string, password: Password | password.Hash | Keyring, options?: SealOptions): Promise<any>
