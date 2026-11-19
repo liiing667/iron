@@ -132,6 +132,10 @@ Seriealizes, encrypts, and signs objects into an **iron** protocol string where:
 
 Return value: **iron** sealed string.
 
+Note: a fingerprint of the security-relevant `options` (the encryption and integrity `algorithm`,
+`iterations`, and salt configuration) is computed, included in the sealed string, and covered by
+the HMAC. This binds each sealed string to the exact options used to generate it.
+
 Note: assigning the password used an `id` allows for password rotation to improve the security of
 your deployment. Passwords should be rotated over time to reduce the risk of compromised security.
 When providing a password id, the id is included with the **iron** protocol string and it must
@@ -164,6 +168,11 @@ Verifies, decrypts, and reconstruct an **iron** protocol string into an object w
   [`seal()`](#await-sealobject-password-options)
 
 Return value: the verified, decripted object.
+
+Note: sealed strings that carry an options fingerprint are rejected with a
+`'Sealed options mismatch'` error when the local `options` do not produce the same fingerprint
+(unknown or conflicting options fail closed). Sealed strings generated before the fingerprint was
+introduced (without a fingerprint component) remain unsealable.
 
 Note: In order to enable password rotation, the `password` argument can accept an object with more
 than one password, each keyed by its id. Together with the `ttl` option, the `password` object only

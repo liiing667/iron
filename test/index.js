@@ -295,8 +295,15 @@ describe('Iron', () => {
 
         it('returns an error when number of sealed components is wrong', async () => {
 
-            const ticket = 'x*Fe26.2**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M**ff2bf988aa0edf2b34c02d220a45c4a3c572dac6b995771ed20de58da919bfa5*HfWzyJlz_UP9odmXvUaVK1TtdDuOCaezr-TAg2GjBCU';
+            const ticket = 'x*x*Fe26.2**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M**ff2bf988aa0edf2b34c02d220a45c4a3c572dac6b995771ed20de58da919bfa5*HfWzyJlz_UP9odmXvUaVK1TtdDuOCaezr-TAg2GjBCU';
             const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Incorrect number of sealed components');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('returns an error when mac prefix is wrong (fingerprint format)', async () => {
+
+            const ticket = 'x*Fe26.2**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M**ff2bf988aa0edf2b34c02d220a45c4a3c572dac6b995771ed20de58da919bfa5*HfWzyJlz_UP9odmXvUaVK1TtdDuOCaezr-TAg2GjBCU';
+            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Wrong mac prefix');
             expect(err.isBoom).to.be.true();
         });
 
@@ -375,6 +382,64 @@ describe('Iron', () => {
             const mac = await Iron.hmacWithPassword(password, options, macBaseString);
             const ticket = macBaseString + '*' + mac.salt + '*' + mac.digest;
             const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Invalid expiration');
+            expect(err.isBoom).to.be.true();
+        });
+    });
+
+    describe('options fingerprint', () => {
+
+        it('binds the options fingerprint into the sealed string', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            expect(sealed.split('*')).to.have.length(9);
+
+            const unsealed = await Iron.unseal(sealed, password, Iron.defaults);
+            expect(unsealed).to.equal(obj);
+        });
+
+        it('accepts matching configurations and rejects conflicting ones (fixed matrix)', async () => {
+
+            const configs = {
+                defaults: Hoek.clone(Iron.defaults),
+                encryptionAlgorithm: Hoek.applyToDefaults(Iron.defaults, { encryption: { algorithm: 'aes-128-ctr' } }),
+                encryptionIterations: Hoek.applyToDefaults(Iron.defaults, { encryption: { iterations: 2 } }),
+                encryptionSaltBits: Hoek.applyToDefaults(Iron.defaults, { encryption: { saltBits: 128 } }),
+                integrityIterations: Hoek.applyToDefaults(Iron.defaults, { integrity: { iterations: 2 } }),
+                integritySaltBits: Hoek.applyToDefaults(Iron.defaults, { integrity: { saltBits: 128 } }),
+                fixedSalt: Hoek.applyToDefaults(Iron.defaults, { encryption: { salt: '4d8nr9q384nr9q384nr93q8nruq9348run' }, integrity: { salt: '8q384nr9q384nr93q8nruq9348run4d9' } })
+            };
+
+            const names = Object.keys(configs);
+            for (const sealName of names) {
+                const sealed = await Iron.seal(obj, password, configs[sealName]);
+                for (const unsealName of names) {
+                    if (sealName === unsealName) {
+                        const unsealed = await Iron.unseal(sealed, password, configs[unsealName]);
+                        expect(unsealed).to.equal(obj);
+                    }
+                    else {
+                        const err = await expect(Iron.unseal(sealed, password, configs[unsealName])).to.reject('Sealed options mismatch');
+                        expect(err.isBoom).to.be.true();
+                    }
+                }
+            }
+        });
+
+        it('fails closed on an unknown or tampered fingerprint', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const parts = sealed.split('*');
+            parts[2] = 'unknownfingerprint';
+            const err = await expect(Iron.unseal(parts.join('*'), password, Iron.defaults)).to.reject('Sealed options mismatch');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails closed when the fingerprint is removed from a sealed string', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const parts = sealed.split('*');
+            parts.splice(2, 1);
+            const err = await expect(Iron.unseal(parts.join('*'), password, Iron.defaults)).to.reject('Bad hmac value');
             expect(err.isBoom).to.be.true();
         });
     });
