@@ -1,0 +1,58 @@
+{
+    "wrongComponentCount": {
+        "message": "Incorrect number of sealed components",
+        "data": {
+            "stage": "parse",
+            "component": null,
+            "keyFingerprint": null
+        }
+    },
+    "wrongPrefix": {
+        "message": "Wrong mac prefix",
+        "data": {
+            "stage": "parse",
+            "component": "prefix",
+            "keyFingerprint": "6b86b273ff34"
+        }
+    },
+    "invalidExpiration": {
+        "message": "Invalid expiration",
+        "data": {
+            "stage": "validate",
+            "component": "expiration",
+            "keyFingerprint": "6b86b273ff34"
+        }
+    },
+    "passwordNotFound": {
+        "message": "Cannot find password",
+        "data": {
+            "stage": "validate",
+            "component": "passwordId",
+            "keyFingerprint": "6b86b273ff34"
+        }
+    },
+    "badHmac": {
+        "message": "Bad hmac value",
+        "data": {
+            "stage": "integrity",
+            "component": "hmac",
+            "keyFingerprint": "6b86b273ff34"
+        }
+    },
+    "invalidEncryptedEncoding": {
+        "message": "Invalid character",
+        "data": {
+            "stage": "decrypt",
+            "component": "encrypted",
+            "keyFingerprint": null
+        }
+    },
+    "invalidIvEncoding": {
+        "message": "Invalid character",
+        "data": {
+            "stage": "decrypt",
+            "component": "encryptionIv",
+            "keyFingerprint": null
+        }
+    }
+}

@@ -85,6 +85,11 @@ export interface SealOptions {
     Local clock time offset, expressed in number of milliseconds (positive or negative). Defaults to 0.
     */
     localtimeOffsetMsec: number;
+
+    /**
+    Include the raw sealed value on `err.data.echo` when unseal() fails. Off by default so error logs never contain ciphertext, MAC, or salts; enable only for local troubleshooting.
+    */
+    errorEcho?: boolean;
 }
 
 
@@ -163,6 +168,12 @@ export const macFormatVersion: string;
 MAC normalization prefix.
 */
 export const macPrefix: string;
+
+
+/**
+Returns a non-reversible fingerprint (first 12 hex characters of the SHA-256 hash) of a password id, or null when no id is provided. Safe to include in error logs.
+*/
+export function keyFingerprint(id: string): string | null
 
 
 /**

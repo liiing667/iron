@@ -1,6 +1,8 @@
 'use strict';
 
 const Crypto = require('crypto');
+const Fs = require('fs');
+const Path = require('path');
 
 const B64 = require('@hapi/b64');
 const Code = require('@hapi/code');
@@ -139,8 +141,14 @@ describe('Iron', () => {
     it('fails to parse a sealed object when password not found', async () => {
 
         const sealed = await Iron.seal(obj, { id: '1', secret: password }, Iron.defaults);
-        const err = await expect(Iron.unseal(sealed, { '2': password }, Iron.defaults)).to.reject('Cannot find password: 1');
+        const err = await expect(Iron.unseal(sealed, { '2': password }, Iron.defaults)).to.reject('Cannot find password');
         expect(err.isBoom).to.be.true();
+        expect(err.message).to.not.contain('1');
+        expect(err.data).to.equal({
+            stage: 'validate',
+            component: 'passwordId',
+            keyFingerprint: Iron.keyFingerprint('1')
+        });
     });
 
     describe('generateKey()', () => {
@@ -352,8 +360,11 @@ describe('Iron', () => {
             const macBaseString = Iron.macPrefix + '**' + key.salt + '*' + iv + '*' + encryptedB64 + '*';
             const mac = await Iron.hmacWithPassword(password, Iron.defaults.integrity, macBaseString);
             const ticket = macBaseString + '*' + mac.salt + '*' + mac.digest;
-            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject(/Failed parsing sealed object JSON: Unexpected token a/);
+            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject(/Failed parsing sealed object JSON: (Unexpected token a|Expected property name)/);
             expect(err.isBoom).to.be.true();
+            expect(err.data.stage).to.equal('decrypt');
+            expect(err.data.keyFingerprint).to.equal(null);
+            expect(JSON.stringify(err.data)).to.not.contain(encryptedB64);
         });
 
         it('returns an error when expired', async () => {
@@ -376,6 +387,100 @@ describe('Iron', () => {
             const ticket = macBaseString + '*' + mac.salt + '*' + mac.digest;
             const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Invalid expiration');
             expect(err.isBoom).to.be.true();
+        });
+
+        describe('safe error details', () => {
+
+            const fixturePath = Path.join(__dirname, 'fixtures', 'unseal-errors.json');
+            const fixture = JSON.parse(Fs.readFileSync(fixturePath, 'utf8'));
+
+            const assertNoSecrets = function (err, sealed) {
+
+                const serialized = JSON.stringify({ message: err.message, data: err.data, payload: err.output.payload });
+                const fragments = sealed.split('*').filter((part) => part.length > 8);
+                for (const fragment of fragments) {
+                    expect(serialized).to.not.contain(fragment);
+                }
+
+                expect(serialized).to.not.contain(password);
+                expect(err.data.echo).to.not.exist();
+                expect(JSON.stringify(err.output.payload)).to.not.contain('echo');
+            };
+
+            it('matches the fixed log fixture and never includes secret fragments', async () => {
+
+                const sealed = await Iron.seal(obj, { id: '1', secret: password }, Iron.defaults);
+                const parts = sealed.split('*');
+                const badMac = sealed.slice(0, -1) + (sealed.endsWith('A') ? 'B' : 'A');
+
+                const macBaseStringEnc = 'Fe26.2**a6dc607945dd1dffb7da0b0bf5f1a7daa6218cbae14cac51dcbd91fb077aeb5b*aOZLCKLhCt0D5IU1qLTtYw*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M??*';
+                const macBaseStringIv = 'Fe26.2**a6dc607945dd1dffb7da0b0bf5f1a7daa6218cbae14cac51dcbd91fb077aeb5b*D3DLEoi-Hn3c972TPpZXqw??*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M*';
+                const integrityOptions = Hoek.clone(Iron.defaults.integrity);
+                integrityOptions.salt = '05b8943049af490e913bbc3a2485bee2aaf7b823f4c41d0ff0b7c168371a3772';
+                const macEnc = await Iron.hmacWithPassword(password, integrityOptions, macBaseStringEnc);
+                const macIv = await Iron.hmacWithPassword(password, integrityOptions, macBaseStringIv);
+
+                const cases = [
+                    ['wrongComponentCount', sealed + '*extra', { '1': password }],
+                    ['wrongPrefix', 'Fe27.2' + sealed.slice('Fe26.2'.length), { '1': password }],
+                    ['invalidExpiration', parts.slice(0, 5).join('*') + '*a*' + parts.slice(6).join('*'), { '1': password }],
+                    ['passwordNotFound', sealed, { '2': password }],
+                    ['badHmac', badMac, { '1': password }],
+                    ['invalidEncryptedEncoding', macBaseStringEnc + '*' + macEnc.salt + '*' + macEnc.digest, password],
+                    ['invalidIvEncoding', macBaseStringIv + '*' + macIv.salt + '*' + macIv.digest, password]
+                ];
+
+                for (const [name, ticket, pwd] of cases) {
+                    const err = await expect(Iron.unseal(ticket, pwd, Iron.defaults)).to.reject(fixture[name].message);
+                    expect(err.isBoom).to.be.true();
+                    expect(err.data).to.equal(fixture[name].data);
+                    assertNoSecrets(err, ticket);
+                }
+
+                expect(Object.keys(fixture).sort()).to.equal(cases.map((entry) => entry[0]).sort());
+            });
+
+            it('keeps the committed fixture free of any sealed or password material', () => {
+
+                const contents = Fs.readFileSync(fixturePath, 'utf8');
+                expect(contents).to.not.contain('Fe26.');
+                expect(contents).to.not.contain(password);
+                expect(contents).to.not.contain('echo');
+
+                for (const entry of Object.values(fixture)) {
+                    expect(entry.data).to.only.contain(['stage', 'component', 'keyFingerprint']);
+                    expect(entry.message).to.not.contain('*');
+                }
+            });
+
+            it('only echoes the sealed value when errorEcho is explicitly enabled', async () => {
+
+                const sealed = await Iron.seal(obj, { id: '1', secret: password }, Iron.defaults);
+                const badMac = sealed.slice(0, -1) + (sealed.endsWith('A') ? 'B' : 'A');
+
+                const defaultErr = await expect(Iron.unseal(badMac, { '1': password }, Iron.defaults)).to.reject('Bad hmac value');
+                expect(defaultErr.data.echo).to.not.exist();
+
+                const echoOptions = Object.assign({}, Iron.defaults, { errorEcho: true });
+                const echoErr = await expect(Iron.unseal(badMac, { '1': password }, echoOptions)).to.reject('Bad hmac value');
+                expect(echoErr.data.echo).to.equal(badMac);
+                expect(echoErr.data.stage).to.equal('integrity');
+                expect(echoErr.data.component).to.equal('hmac');
+                expect(echoErr.data.keyFingerprint).to.equal(Iron.keyFingerprint('1'));
+                expect(JSON.stringify(echoErr.output.payload)).to.not.contain(badMac);
+            });
+
+            it('exposes a non-reversible key fingerprint', () => {
+
+                const fingerprint = Iron.keyFingerprint('1');
+                expect(fingerprint).to.have.length(12);
+                expect(fingerprint).to.equal('6b86b273ff34');
+                expect(fingerprint).to.not.contain('1');
+                expect(Iron.keyFingerprint('1')).to.equal(fingerprint);
+                expect(Iron.keyFingerprint('2')).to.not.equal(fingerprint);
+                expect(Iron.keyFingerprint('')).to.equal(null);
+                expect(Iron.keyFingerprint(null)).to.equal(null);
+            });
         });
     });
 });

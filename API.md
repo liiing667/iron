@@ -250,6 +250,30 @@ The _'seal()'_ and _'unseal()'_ methods also support the following options:
   Defaults to `60` seconds.
 - `localtimeOffsetMsec` - local clock time offset, expressed in number of milliseconds (positive or
   negative). Defaults to `0`.
+- `errorEcho` - when `true`, a failed `unseal()` attaches the raw sealed string to `err.data.echo`
+  for local troubleshooting. Defaults to `false`, so error messages and `err.data` never contain
+  ciphertext, salts, initialization vector, MAC, or password material. Only enable it when the error
+  is consumed locally and will not be forwarded to a ticket or logging system.
+
+## Error Details
+
+Errors thrown by `unseal()` remain [Boom](https://hapi.dev/module/boom/) errors with the same
+messages as before, but the messages never include components of the sealed string or the password.
+Safe diagnostics are attached to `err.data`:
+
+- `stage` - the pipeline stage that failed, one of `'parse'`, `'validate'`, `'integrity'`, or
+  `'decrypt'`.
+- `component` - the sealed component involved (e.g. `'prefix'`, `'expiration'`, `'passwordId'`,
+  `'encryptionIv'`, `'encrypted'`, `'hmac'`), or `null` when no single component applies.
+- `keyFingerprint` - the first 12 hex characters of the SHA-256 hash of the password id found in
+  the sealed string, or `null` when the string carries no password id. It is a non-reversible
+  fingerprint, not the id itself, so it is safe to log.
+- `echo` - present only when `options.errorEcho === true`; holds the complete sealed string for
+  local debugging.
+
+The same fingerprint can be generated directly with `keyFingerprint(id)` to correlate logs without
+exposing the actual password id. Neither `err.data` nor `echo` is ever included in
+`err.output.payload`, so HTTP responses stay free of these details.
 
 ### Defaults
 
