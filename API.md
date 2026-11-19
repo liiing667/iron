@@ -120,11 +120,11 @@ Seriealizes, encrypts, and signs objects into an **iron** protocol string where:
     - a key buffer used as-is (after validating sufficient length based on the algorithm used).
 
     - an object with:
-        - `id` - a password identifier (must consist of only letters, numbers, and `_`).
+        - `id` - a password identifier (1-256 characters of letters, numbers, `_`, `-`, `.`, `~`; case-sensitive; must not be a reserved id: `default`, `__proto__`, `constructor`, `prototype`).
         - `secret` - a password string or key buffer used for both encryption and integrity.
     
     - an object with:
-        - `id` - a password identifier (must consist of only letters, numbers, and `_`).
+        - `id` - a password identifier (1-256 characters of letters, numbers, `_`, `-`, `.`, `~`; case-sensitive; must not be a reserved id: `default`, `__proto__`, `constructor`, `prototype`).
         - `encryption` - a password string or key buffer used for encryption.
         - `integrity` - a password string or key buffer used for integrity.
 

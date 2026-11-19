@@ -282,6 +282,74 @@ describe('Iron', () => {
             const err = await expect(Iron.seal('data', { id: 'asd$', secret: 'asd' }, {})).to.reject('Invalid password id');
             expect(err.isBoom).to.be.true();
         });
+
+        describe('password id', () => {
+
+            const ids = [
+
+                // Legal: accepted and forms a unique identity
+
+                { id: '1', result: 'legal' },                               // Legacy id
+                { id: 'abc_XYZ_123', result: 'legal' },                     // Legacy word characters
+                { id: 'tenant-a.b_c~d', result: 'legal' },                  // Tenant-friendly separators
+                { id: 'Tenant', result: 'legal' },                          // Case is part of the identity
+                { id: 'a'.repeat(256), result: 'legal' },                   // Maximum length
+                { id: '', result: 'legal' },                                // Empty id maps to the default identity
+                { id: null, result: 'legal' },                              // Absent id maps to the default identity
+
+                // Conflict: collides with another identity
+
+                { id: 'default', result: 'conflict' },                      // Reserved for the empty id identity
+                { id: '__proto__', result: 'conflict' },                    // Object prototype keys
+                { id: 'constructor', result: 'conflict' },
+                { id: 'prototype', result: 'conflict' },
+
+                // Rejected: invalid character, length, or type
+
+                { id: 'asd$', result: 'rejected' },
+                { id: 'a*b', result: 'rejected' },                          // Protocol delimiter
+                { id: 'a b', result: 'rejected' },
+                { id: 'a\nb', result: 'rejected' },                         // Control characters
+                { id: 'a\u0000b', result: 'rejected' },
+                { id: 'tenant#1', result: 'rejected' },
+                { id: 'a'.repeat(257), result: 'rejected' },                // Too long
+                { id: 123, result: 'rejected' }                             // Non-string
+            ];
+
+            it('accepts legal ids and fails closed on conflicts and invalid values', async () => {
+
+                for (const { id, result } of ids) {
+                    if (result === 'legal') {
+                        const sealed = await Iron.seal(obj, { id, secret: password }, Iron.defaults);
+                        const unsealed = await Iron.unseal(sealed, { [id || 'default']: password }, Iron.defaults);
+                        expect(unsealed).to.equal(obj);
+                    }
+                    else if (result === 'conflict') {
+                        const err = await expect(Iron.seal(obj, { id, secret: password }, Iron.defaults)).to.reject('Password id conflicts with a reserved id');
+                        expect(err.isBoom).to.be.true();
+                    }
+                    else {
+                        const err = await expect(Iron.seal(obj, { id, secret: password }, Iron.defaults)).to.reject('Invalid password id');
+                        expect(err.isBoom).to.be.true();
+                    }
+                }
+            });
+
+            it('treats ids with different case as distinct identities', async () => {
+
+                const sealed = await Iron.seal(obj, { id: 'Tenant', secret: password }, Iron.defaults);
+                const err = await expect(Iron.unseal(sealed, { tenant: password }, Iron.defaults)).to.reject('Cannot find password: Tenant');
+                expect(err.isBoom).to.be.true();
+            });
+
+            it('rejects a tampered ticket with an invalid password id', async () => {
+
+                const sealed = await Iron.seal(obj, { id: 'tenant', secret: password }, Iron.defaults);
+                const tampered = sealed.replace('*tenant*', '*ten$ant*');
+                const err = await expect(Iron.unseal(tampered, { tenant: password }, Iron.defaults)).to.reject('Invalid password id');
+                expect(err.isBoom).to.be.true();
+            });
+        });
     });
 
     describe('unseal()', () => {

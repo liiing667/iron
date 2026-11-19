@@ -119,6 +119,9 @@ declare namespace password {
     Secret object with optional id.
     */
     interface Secret {
+        /**
+        Password identifier (1-256 characters of letters, numbers, `_`, `-`, `.`, `~`; case-sensitive; reserved ids `default`, `__proto__`, `constructor`, `prototype` are rejected).
+        */
         id?: string,
         secret: Password
     }
@@ -127,6 +130,9 @@ declare namespace password {
     Secret object with optional id and specified password for each encryption and integrity.
     */
     interface Specific {
+        /**
+        Password identifier (1-256 characters of letters, numbers, `_`, `-`, `.`, `~`; case-sensitive; reserved ids `default`, `__proto__`, `constructor`, `prototype` are rejected).
+        */
         id?: string,
         encryption: Password,
         integrity: Password
