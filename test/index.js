@@ -374,8 +374,108 @@ describe('Iron', () => {
             options.salt = 'e4fe33b6dc4c7ef5ad7907f015deb7b03723b03a54764aceeb2ab1235cc8dce3';
             const mac = await Iron.hmacWithPassword(password, options, macBaseString);
             const ticket = macBaseString + '*' + mac.salt + '*' + mac.digest;
-            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Invalid expiration');
+            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Invalid character');
             expect(err.isBoom).to.be.true();
+        });
+
+        it('rejects a non-string sealed value during syntax validation', async () => {
+
+            const err = await expect(Iron.unseal(1234, password, Iron.defaults)).to.reject('Incorrect number of sealed components');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('rejects a duplicate envelope id during syntax validation', async () => {
+
+            const sealed = await Iron.seal(obj, { id: '1', secret: password }, Iron.defaults);
+            const parts = sealed.split('*');
+            parts[1] = Iron.macPrefix;
+            const err = await expect(Iron.unseal(parts.join('*'), { '1': password }, Iron.defaults)).to.reject('Invalid password id');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('validates the complete envelope syntax before any cryptographic work', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const parts = sealed.split('*');
+
+            // Fixed fixtures: each malformed component maps to its rejection stage
+
+            const fixtures = [
+                { index: 0, value: 'Fe27.2', message: 'Wrong mac prefix' },
+                { index: 1, value: 'bad$id', message: 'Invalid password id' },
+                { index: 1, value: Iron.macPrefix, message: 'Invalid password id' },
+                { index: 2, value: 'zzzz', message: 'Invalid character' },
+                { index: 3, value: '??', message: 'Invalid character' },
+                { index: 4, value: '??', message: 'Invalid character' },
+                { index: 5, value: 'abc', message: 'Invalid character' },
+                { index: 6, value: 'zzzz', message: 'Invalid character' },
+                { index: 7, value: '??', message: 'Invalid character' }
+            ];
+
+            const calls = [];
+            const originalGenerateKey = Iron.generateKey;
+            Iron.generateKey = function (...args) {
+
+                calls.push(args[1].algorithm);
+                return originalGenerateKey.apply(this, args);
+            };
+
+            try {
+                for (const fixture of fixtures) {
+                    const mutated = parts.slice();
+                    mutated[fixture.index] = fixture.value;
+                    const err = await expect(Iron.unseal(mutated.join('*'), password, Iron.defaults)).to.reject(fixture.message);
+                    expect(err.isBoom).to.be.true();
+                }
+
+                expect(calls).to.be.empty();
+            }
+            finally {
+                Iron.generateKey = originalGenerateKey;
+            }
+
+            // The same well-formed sealed value still unseals to the original object
+
+            const unsealed = await Iron.unseal(sealed, password, Iron.defaults);
+            expect(unsealed).to.equal(obj);
+        });
+
+        it('bounds the split and rejects envelopes with extra components without crypto work', async () => {
+
+            const oversized = Array(100).fill('Fe26.2').join('*');
+            const calls = [];
+            const originalGenerateKey = Iron.generateKey;
+            Iron.generateKey = function (...args) {
+
+                calls.push(args[1].algorithm);
+                return originalGenerateKey.apply(this, args);
+            };
+
+            try {
+                const err = await expect(Iron.unseal(oversized, password, Iron.defaults)).to.reject('Incorrect number of sealed components');
+                expect(err.isBoom).to.be.true();
+                expect(calls).to.be.empty();
+            }
+            finally {
+                Iron.generateKey = originalGenerateKey;
+            }
+        });
+
+        it('classifies errors by processing stage', async () => {
+
+            const syntax = await expect(Iron.unseal('x*y', password, Iron.defaults)).to.reject('Incorrect number of sealed components');
+            expect(syntax.isBoom).to.be.true();
+
+            const expiredBase = 'Fe26.2**a38dc7a7bf2f8ff650b103d8c669d76ad219527fbfff3d98e3b30bbecbe9bd3b*nTsatb7AQE1t0uMXDx-2aw*uIO5bRFTwEBlPC1Nd_hfSkZfqxkxuY1EO2Be_jJPNQCqFNumRBjQAl8WIKBW1beF*1380495854060';
+            const ttlOptions = Hoek.clone(Iron.defaults.integrity);
+            ttlOptions.salt = 'e4fe33b6dc4c7ef5ad7907f015deb7b03723b03a54764aceeb2ab1235cc8dce3';
+            const ttlMac = await Iron.hmacWithPassword(password, ttlOptions, expiredBase);
+            const ttl = await expect(Iron.unseal(expiredBase + '*' + ttlMac.salt + '*' + ttlMac.digest, password, Iron.defaults)).to.reject('Expired seal');
+            expect(ttl.isBoom).to.be.true();
+
+            const sealed = await Iron.seal(obj, { id: '1', secret: password }, Iron.defaults);
+            const missing = await expect(Iron.unseal(sealed, { '2': password }, Iron.defaults)).to.reject('Cannot find password: 1');
+            expect(missing.isBoom).to.be.true();
         });
     });
 });
