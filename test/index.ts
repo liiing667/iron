@@ -127,3 +127,35 @@ Iron.encrypt(password, options, 'hello')
 //expect.error(Iron.unseal('uuddlrlrbabas', password, options))
 //expect.error(Iron.unseal('uuddlrlrbabas', 256, defaults))
 expect.error(Iron.unseal(256, password))
+
+
+// Keyring
+
+const keyring = new Iron.Keyring({ gracePeriodMsec: 1000 });
+new Iron.Keyring();
+
+keyring.publish('v1', password);
+keyring.rotate('v2', buffer);
+keyring.revoke('v1');
+keyring.publish('v3', password);
+keyring.revoke('v3', Date.now());
+
+expect.type<string | null>(keyring.current);
+expect.type<Iron.KeyStatus | undefined>(keyring.status('v1'));
+expect.type<Iron.KeyStatus | undefined>(keyring.status('v1', Date.now()));
+
+try {
+    expect.type<string>(await keyring.seal('seal_this_string', defaults));
+    expect.type<object>(await keyring.unseal('uuddlrlrbabas', defaults));
+}
+catch (err) {
+    // Ignore runtime errors, only types are checked
+}
+
+expect.error(new Iron.Keyring({ gracePeriodMsec: '1000' }));
+expect.error(keyring.publish('v1', { secret: password }));
+expect.error(keyring.rotate(256, password));
+expect.error(keyring.revoke());
+expect.error(keyring.status());
+expect.error(keyring.seal('seal_this_string'));
+expect.error(keyring.unseal('uuddlrlrbabas'));

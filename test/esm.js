@@ -20,6 +20,7 @@ describe('import()', () => {
     it('exposes all methods and classes as named imports', () => {
 
         expect(Object.keys(Ion)).to.equal([
+            'Keyring',
             'algorithms',
             'decrypt',
             'default',

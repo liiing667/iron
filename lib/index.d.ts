@@ -234,3 +234,69 @@ Verifies, decrypts, and reconstruct an iron protocol string into an object
 @returns the verified decrypted object
 */
 export function unseal(sealed: string, password: Password | password.Hash, options?: SealOptions): Promise<any>
+
+
+/**
+Keyring constructor options.
+*/
+export interface KeyringOptions {
+
+    /**
+    Transition window in milliseconds during which a revoked key id is still accepted by unseal() while the revocation propagates. Defaults to 0.
+    */
+    gracePeriodMsec?: number;
+}
+
+
+/**
+Lifecycle status of a key id: 'current', 'historical', 'revoked' (inside the grace window), or 'retired' (revocation propagated).
+*/
+export type KeyStatus = 'current' | 'historical' | 'revoked' | 'retired';
+
+
+/**
+Key rotation manager with a revocation barrier for seal() / unseal().
+
+The current key seals new objects. Historical keys only unseal. A revoked key
+keeps unsealing during the grace period and is rejected once the revocation
+has propagated.
+*/
+export class Keyring {
+
+    constructor(options?: KeyringOptions);
+
+    /**
+    The id of the current key used for sealing, or null when none was rotated in.
+    */
+    readonly current: string | null;
+
+    /**
+    Registers a key id without promoting it to current.
+    */
+    publish(id: string, password: Password): this;
+
+    /**
+    Registers a key id and promotes it to current, demoting any previous current key to historical.
+    */
+    rotate(id: string, password: Password): this;
+
+    /**
+    Marks a non-current key id as revoked. The id stays usable until the grace period elapses.
+    */
+    revoke(id: string, now?: number): this;
+
+    /**
+    Returns the lifecycle status of a key id, or undefined when unknown.
+    */
+    status(id: string, now?: number): KeyStatus | undefined;
+
+    /**
+    Seals an object with the current key.
+    */
+    seal(object: any, options: SealOptions): Promise<string>;
+
+    /**
+    Unseals a string using the key id embedded in the sealed value, falling back to every usable key when the id is unknown. Retired keys are never used.
+    */
+    unseal(sealed: string, options: SealOptions): Promise<any>;
+}

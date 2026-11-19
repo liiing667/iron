@@ -169,6 +169,54 @@ Note: In order to enable password rotation, the `password` argument can accept a
 than one password, each keyed by its id. Together with the `ttl` option, the `password` object only
 needs to include the passwords used within the ttl window.
 
+### `new Keyring(options)`
+
+Creates a key rotation manager that tracks the lifecycle of password ids and enforces a revocation
+barrier between [`seal()`](#await-sealobject-password-options) and
+[`unseal()`](#await-unsealsealed-password-options) where:
+
+- `options` - optional object with:
+    - `gracePeriodMsec` - the transition window in milliseconds during which a revoked key id is
+      still accepted by `unseal()` while the revocation propagates. Defaults to `0`.
+
+Each key id moves through a fixed set of states: `current` (the only key used to seal), `historical`
+(unseal-only), `revoked` (unseal-only until the grace period elapses), and `retired` (never accepted
+again). Once a revocation has propagated, sealed values bearing the retired id can no longer be
+unsealed, while values sealed during the legitimate transition window remain valid until then.
+
+```javascript
+const keyring = new Iron.Keyring({ gracePeriodMsec: 60000 });
+
+keyring.rotate('v1', password1);                // 'v1' becomes current
+const sealed = await keyring.seal(obj, Iron.defaults);
+
+keyring.rotate('v2', password2);                // 'v2' becomes current, 'v1' historical
+keyring.revoke('v1');                           // 'v1' retires after the grace period
+```
+
+The keyring exposes the following methods:
+
+- `current` - read-only property with the id of the current key, or `null` when none was rotated in.
+
+- `publish(id, password)` - registers a key id (string or buffer password) without promoting it.
+  Returns the keyring.
+
+- `rotate(id, password)` - registers a key id and promotes it to current, demoting any previous
+  current key to historical. Returns the keyring.
+
+- `revoke(id, [now])` - marks a non-current key id as revoked. The id stays usable until
+  `gracePeriodMsec` has elapsed, and is rejected afterwards. Returns the keyring.
+
+- `status(id, [now])` - returns `'current'`, `'historical'`, `'revoked'`, or `'retired'` for a known
+  key id, or `undefined` when the id is unknown.
+
+- `await seal(object, options)` - seals an object with the current key, embedding its id. Throws
+  when no current key is set.
+
+- `await unseal(sealed, options)` - unseals using the key id embedded in the sealed value. When the
+  id is unknown, falls back to trying every usable key (current first). Retired keys are never
+  used, and unsealing with a retired id throws `'Cannot unseal with retired key'`.
+
 ### `await generateKey(password, options)`
 
 Generates an key from the password where:

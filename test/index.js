@@ -378,4 +378,251 @@ describe('Iron', () => {
             expect(err.isBoom).to.be.true();
         });
     });
+
+    describe('Keyring', () => {
+
+        const password2 = 'another_not_random_password_that_is_long_enough';
+
+        it('starts empty without options', () => {
+
+            const keyring = new Iron.Keyring();
+            expect(keyring.current).to.be.null();
+            expect(keyring.status('v1')).to.be.undefined();
+        });
+
+        it('starts empty with partial options', () => {
+
+            const keyring = new Iron.Keyring({});
+            expect(keyring.current).to.be.null();
+        });
+
+        it('rotates keys and tracks current and historical status', async () => {
+
+            const keyring = new Iron.Keyring({ gracePeriodMsec: 1000 });
+            keyring.rotate('v1', password);
+            expect(keyring.current).to.equal('v1');
+            expect(keyring.status('v1')).to.equal('current');
+
+            keyring.rotate('v2', password2);
+            expect(keyring.current).to.equal('v2');
+            expect(keyring.status('v1')).to.equal('historical');
+            expect(keyring.status('v2')).to.equal('current');
+
+            const sealed1 = await keyring.unseal(await keyring.seal(obj, Iron.defaults), Iron.defaults);
+            expect(sealed1).to.equal(obj);
+        });
+
+        it('publishes a key without promoting it', () => {
+
+            const keyring = new Iron.Keyring();
+            keyring.publish('v1', password);
+            expect(keyring.current).to.be.null();
+            expect(keyring.status('v1')).to.equal('historical');
+        });
+
+        it('returns an error when key id is invalid', () => {
+
+            const keyring = new Iron.Keyring();
+            expect(() => keyring.publish(null, password)).to.throw('Invalid key id');
+            expect(() => keyring.publish(1, password)).to.throw('Invalid key id');
+            expect(() => keyring.publish('a$b', password)).to.throw('Invalid key id');
+        });
+
+        it('returns an error when password is invalid', () => {
+
+            const keyring = new Iron.Keyring();
+            expect(() => keyring.publish('v1', null)).to.throw('Password must be a string or buffer');
+            expect(() => keyring.publish('v1', { secret: password })).to.throw('Password must be a string or buffer');
+        });
+
+        it('returns an error when key id is a duplicate', () => {
+
+            const keyring = new Iron.Keyring();
+            keyring.publish('v1', password);
+            expect(() => keyring.publish('v1', password)).to.throw('Duplicate key id: v1');
+            expect(() => keyring.rotate('v1', password)).to.throw('Duplicate key id: v1');
+        });
+
+        it('supports buffer passwords', async () => {
+
+            const keyring = new Iron.Keyring();
+            keyring.rotate('v1', Cryptiles.randomBits(256));
+            const sealed = await keyring.seal(obj, Iron.defaults);
+            const unsealed = await keyring.unseal(sealed, Iron.defaults);
+            expect(unsealed).to.equal(obj);
+        });
+
+        it('returns an error when revoking an unknown key', () => {
+
+            const keyring = new Iron.Keyring();
+            expect(() => keyring.revoke('v1')).to.throw('Unknown key id: v1');
+        });
+
+        it('returns an error when revoking the current key', () => {
+
+            const keyring = new Iron.Keyring();
+            keyring.rotate('v1', password);
+            expect(() => keyring.revoke('v1')).to.throw('Cannot revoke current key: v1');
+        });
+
+        it('returns an error when revoking an already revoked key', () => {
+
+            const keyring = new Iron.Keyring();
+            keyring.rotate('v1', password);
+            keyring.rotate('v2', password2);
+            keyring.revoke('v1');
+            expect(() => keyring.revoke('v1')).to.throw('Key already revoked: v1');
+        });
+
+        it('reports revoked and retired status around the grace boundary', () => {
+
+            const keyring = new Iron.Keyring({ gracePeriodMsec: 1000 });
+            keyring.rotate('v1', password);
+            keyring.rotate('v2', password2);
+            keyring.revoke('v1');
+
+            expect(keyring.status('v1')).to.equal('revoked');
+            expect(keyring.status('v1', Date.now() + 999)).to.equal('revoked');
+            expect(keyring.status('v1', Date.now() + 1000)).to.equal('retired');
+        });
+
+        it('returns an error when sealing without a current key', async () => {
+
+            const keyring = new Iron.Keyring();
+            keyring.publish('v1', password);
+            const err = await expect(keyring.seal(obj, Iron.defaults)).to.reject('Cannot seal without a current key');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('returns an error when sealed components are wrong', async () => {
+
+            const keyring = new Iron.Keyring();
+            keyring.rotate('v1', password);
+            const err = await expect(keyring.unseal('a*b*c', Iron.defaults)).to.reject('Incorrect number of sealed components');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('unseals historical keys but seals only with the current key', async () => {
+
+            const keyring = new Iron.Keyring();
+            keyring.rotate('v1', password);
+            const sealed1 = await keyring.seal(obj, Iron.defaults);
+
+            keyring.rotate('v2', password2);
+            const sealed2 = await keyring.seal(obj, Iron.defaults);
+
+            expect(sealed1.split('*')[1]).to.equal('v1');
+            expect(sealed2.split('*')[1]).to.equal('v2');
+            expect(await keyring.unseal(sealed1, Iron.defaults)).to.equal(obj);
+            expect(await keyring.unseal(sealed2, Iron.defaults)).to.equal(obj);
+        });
+
+        it('rejects retired keys after revocation propagates', async () => {
+
+            const keyring = new Iron.Keyring();                                 // Zero grace period
+            keyring.rotate('v1', password);
+            const sealed = await keyring.seal(obj, Iron.defaults);
+            keyring.rotate('v2', password2);
+            keyring.revoke('v1');
+
+            const options = Hoek.clone(Iron.defaults);
+            delete options.localtimeOffsetMsec;
+            const err = await expect(keyring.unseal(sealed, options)).to.reject('Cannot unseal with retired key: v1');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('returns an error when id is unknown and no key is usable', async () => {
+
+            const keyring = new Iron.Keyring();
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const err = await expect(keyring.unseal(sealed, Iron.defaults)).to.reject('Cannot find password: default');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('skips retired keys when falling back', async () => {
+
+            const keyring = new Iron.Keyring();                                 // Zero grace period
+            keyring.rotate('v1', password);
+            keyring.rotate('v2', password2);
+            keyring.revoke('v1');
+
+            const sealed = await Iron.seal(obj, { id: 'v9', secret: password }, Iron.defaults);
+            const err = await expect(keyring.unseal(sealed, Iron.defaults)).to.reject('Bad hmac value');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('falls back to usable keys when id is unknown', async () => {
+
+            const keyring = new Iron.Keyring();
+            keyring.rotate('v1', password);
+            keyring.rotate('v2', password2);
+            const sealed = await Iron.seal(obj, { id: 'v9', secret: password }, Iron.defaults);
+            const unsealed = await keyring.unseal(sealed, Iron.defaults);
+            expect(unsealed).to.equal(obj);
+        });
+
+        it('returns an error when id is unknown and every usable key is retired', async () => {
+
+            const keyring = new Iron.Keyring();                                 // Zero grace period
+            keyring.publish('v1', password);
+            keyring.publish('v2', password2);
+            keyring.revoke('v1');
+            keyring.revoke('v2');
+
+            const sealed = await Iron.seal(obj, { id: 'v9', secret: password }, Iron.defaults);
+            const err = await expect(keyring.unseal(sealed, Iron.defaults)).to.reject('Cannot find password: v9');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('enforces the rotation barrier across a fixed concurrency fixture', async () => {
+
+            const keyring = new Iron.Keyring({ gracePeriodMsec: 1000 });
+
+            // Generation 1: eight seals under v1
+
+            keyring.rotate('v1', password);
+            const generation1 = [];
+            for (let i = 0; i < 8; ++i) {
+                generation1.push(await keyring.seal(Object.assign({ n: i }, obj), Iron.defaults));
+            }
+
+            // Switch boundary: v2 becomes current, v1 revoked (propagates after grace period)
+
+            keyring.rotate('v2', password2);
+            const generation2 = await keyring.seal(obj, Iron.defaults);
+            keyring.revoke('v1');
+
+            // Transition window: concurrent unseals of both generations succeed
+
+            const transition = await Promise.all([
+                ...generation1.map((sealed) => keyring.unseal(sealed, Iron.defaults)),
+                keyring.unseal(generation2, Iron.defaults)
+            ]);
+
+            expect(transition.length).to.equal(9);
+            expect(transition[3].n).to.equal(3);
+
+            // After propagation: concurrent unseals of generation 1 all hit the barrier
+
+            const propagated = Hoek.clone(Iron.defaults);
+            propagated.localtimeOffsetMsec = 1000;
+
+            const settled = await Promise.all([
+                ...generation1.map((sealed) => keyring.unseal(sealed, propagated).then((value) => value, (err) => err)),
+                keyring.unseal(generation2, propagated)
+            ]);
+
+            for (let i = 0; i < 8; ++i) {
+                expect(settled[i]).to.be.an.error('Cannot unseal with retired key: v1');
+            }
+
+            expect(settled[8]).to.equal(obj);
+
+            // Final state: v1 retired, v2 the only usable key
+
+            expect(keyring.status('v1', Date.now() + 1000)).to.equal('retired');
+            expect(keyring.status('v2')).to.equal('current');
+            expect(keyring.current).to.equal('v2');
+        });
+    });
 });
