@@ -128,6 +128,11 @@ Seriealizes, encrypts, and signs objects into an **iron** protocol string where:
         - `encryption` - a password string or key buffer used for encryption.
         - `integrity` - a password string or key buffer used for integrity.
 
+    - a keyring (see [Keyrings and rotation](#keyrings-and-rotation)) - an array of password
+      entries or an object mapping password ids to entries. When sealing with a keyring, the
+      single entry marked `current` is used. If no entry is marked `current`, a keyring with a
+      single seal-capable entry is accepted; anything else fails closed.
+
 - `options` - see [Options](#options).
 
 Return value: **iron** sealed string.
@@ -160,6 +165,9 @@ Verifies, decrypts, and reconstruct an **iron** protocol string into an object w
             - `encryption` - a password string or key buffer used for encryption.
             - `integrity` - a password string or key buffer used for integrity.
 
+    - a keyring (see [Keyrings and rotation](#keyrings-and-rotation)) - an array of password
+      entries or an object mapping password ids to entries.
+
 - `options` - see [Options](#options). Must match the `options` value passed to
   [`seal()`](#await-sealobject-password-options)
 
@@ -168,6 +176,37 @@ Return value: the verified, decripted object.
 Note: In order to enable password rotation, the `password` argument can accept an object with more
 than one password, each keyed by its id. Together with the `ttl` option, the `password` object only
 needs to include the passwords used within the ttl window.
+
+### Keyrings and rotation
+
+A keyring is a set of password entries used to select the key matching a sealed token. A keyring
+can be expressed as an object mapping password ids to entries, or as an array of entries. Each
+entry is an object with:
+
+- `id` - the password identifier. When using the object map form, the map key is the id and a
+  conflicting `id` property is rejected.
+- `secret` - a password string or key buffer used for both encryption and integrity. Instead of
+  `secret`, separate `encryption` and `integrity` passwords can be provided.
+- `purpose` - one of `'seal'`, `'unseal'`, or `'both'` (default). A key is never used across
+  purposes: a seal-only key cannot unseal and an unseal-only key cannot seal.
+- `current` - when `true`, marks the entry used to seal new tokens. At most one entry can be
+  current.
+- `historical` - when `true`, marks a rotated-out key kept only to unseal existing tokens
+  (equivalent to `purpose: 'unseal'`). Historical keys allow legitimate old tokens to remain
+  valid until they expire.
+- `default` - when `true`, allows the entry to unseal tokens that do not include a password id.
+  The entry with id `'default'` is always a default entry.
+
+Key selection when unsealing fails closed:
+
+- a token with a password id only matches entries with the same id (an anonymous bare password
+  matches any id). Unknown ids are rejected with `Cannot find password: <id>`.
+- a token without a password id only matches default entries, and is rejected with
+  `Missing password id` when the `requirePasswordId` option is set, or with
+  `Cannot find default password` when no default entry exists.
+- entries whose `purpose` does not allow unsealing are rejected as cross-purpose usage.
+- if more than one entry matches (for example duplicate ids), unsealing fails with
+  `Multiple passwords match id: <id>` instead of picking one.
 
 ### `await generateKey(password, options)`
 
@@ -250,6 +289,8 @@ The _'seal()'_ and _'unseal()'_ methods also support the following options:
   Defaults to `60` seconds.
 - `localtimeOffsetMsec` - local clock time offset, expressed in number of milliseconds (positive or
   negative). Defaults to `0`.
+- `requirePasswordId` - when `true`, sealed tokens without a password id are rejected by
+  `unseal()` instead of falling back to the default password. Defaults to `false`.
 
 ### Defaults
 

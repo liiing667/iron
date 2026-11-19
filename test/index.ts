@@ -127,3 +127,23 @@ Iron.encrypt(password, options, 'hello')
 //expect.error(Iron.unseal('uuddlrlrbabas', password, options))
 //expect.error(Iron.unseal('uuddlrlrbabas', 256, defaults))
 expect.error(Iron.unseal(256, password))
+
+
+// keyring rotation
+
+const keyring: Iron.password.Entry[] = [
+    { id: 'v2026_01', secret: password, historical: true },
+    { id: 'v2026_11', secret: password, current: true }
+];
+
+Iron.seal('seal_this_string', keyring, defaults)
+Iron.seal('seal_this_string', { current: { secret: password, current: true } }, defaults)
+
+Iron.unseal('uuddlrlrbabas', keyring, defaults)         // $lab:types:skip$
+Iron.unseal('uuddlrlrbabas', keyring)                   // $lab:types:skip$
+Iron.unseal('uuddlrlrbabas', { v1: password, v2: { secret: password, default: true } }, { ...defaults, requirePasswordId: true })       // $lab:types:skip$
+Iron.unseal('uuddlrlrbabas', { id: 'v1', secret: password }, defaults)      // $lab:types:skip$
+
+expect.type<Iron.SealOptions>({ ...defaults, requirePasswordId: true })
+
+expect.error(Iron.unseal('uuddlrlrbabas', [{ id: 'v1', secret: password, purpose: 'wiggle' }], defaults))

@@ -143,6 +143,173 @@ describe('Iron', () => {
         expect(err.isBoom).to.be.true();
     });
 
+    describe('keyring rotation', () => {
+
+        const passwords = {
+            v1: 'old_password_that_is_long_enough_to_use_1',
+            v2: 'new_password_that_is_long_enough_to_use_2',
+            v3: 'seal_only_password_that_is_long_enough3'
+        };
+
+        const rotated = [
+            { id: 'v1', secret: passwords.v1, historical: true },
+            { id: 'v2', secret: passwords.v2, current: true }
+        ];
+
+        it('seals with the current key and migrates historical tokens', async () => {
+
+            const oldToken = await Iron.seal(obj, { id: 'v1', secret: passwords.v1 }, Iron.defaults);
+
+            const unsealed = await Iron.unseal(oldToken, rotated, Iron.defaults);
+            expect(unsealed).to.equal(obj);
+
+            const sealed = await Iron.seal(obj, rotated, Iron.defaults);
+            expect(sealed.split('*')[1]).to.equal('v2');
+
+            const resealed = await Iron.unseal(sealed, rotated, Iron.defaults);
+            expect(resealed).to.equal(obj);
+        });
+
+        it('rejects a token with an unknown password id', async () => {
+
+            const oldToken = await Iron.seal(obj, { id: 'v1', secret: passwords.v1 }, Iron.defaults);
+            const err = await expect(Iron.unseal(oldToken, [rotated[1]], Iron.defaults)).to.reject('Cannot find password: v1');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails closed on duplicate password ids', async () => {
+
+            const token = await Iron.seal(obj, { id: 'v2', secret: passwords.v2 }, Iron.defaults);
+
+            const duplicate = [
+                { id: 'v2', secret: passwords.v2 },
+                { id: 'v2', secret: passwords.v3 }
+            ];
+
+            const err = await expect(Iron.unseal(token, duplicate, Iron.defaults)).to.reject('Multiple passwords match id: v2');
+            expect(err.isBoom).to.be.true();
+
+            const anonymous = [
+                { id: 'v2', secret: passwords.v2 },
+                { secret: passwords.v3 }
+            ];
+
+            const err2 = await expect(Iron.unseal(token, anonymous, Iron.defaults)).to.reject('Multiple passwords match id: v2');
+            expect(err2.isBoom).to.be.true();
+        });
+
+        it('rejects cross-purpose key usage', async () => {
+
+            const token = await Iron.seal(obj, { id: 'v3', secret: passwords.v3 }, Iron.defaults);
+            const err = await expect(Iron.unseal(token, [{ id: 'v3', secret: passwords.v3, purpose: 'seal' }], Iron.defaults)).to.reject('Password v3 is not allowed for unseal');
+            expect(err.isBoom).to.be.true();
+
+            const idLess = await Iron.seal(obj, password, Iron.defaults);
+            const err2 = await expect(Iron.unseal(idLess, [{ id: 'default', secret: password, purpose: 'seal' }], Iron.defaults)).to.reject('Password default is not allowed for unseal');
+            expect(err2.isBoom).to.be.true();
+        });
+
+        it('rejects id-less tokens when requirePasswordId is set', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            options.requirePasswordId = true;
+
+            const idLess = await Iron.seal(obj, password, Iron.defaults);
+            const err = await expect(Iron.unseal(idLess, { default: password }, options)).to.reject('Missing password id');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('rejects id-less tokens without a default key', async () => {
+
+            const idLess = await Iron.seal(obj, password, Iron.defaults);
+            const err = await expect(Iron.unseal(idLess, rotated, Iron.defaults)).to.reject('Cannot find default password');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails closed on multiple default keys', async () => {
+
+            const idLess = await Iron.seal(obj, password, Iron.defaults);
+
+            const multi = [
+                { id: 'default', secret: password },
+                { id: 'alt', secret: passwords.v2, default: true }
+            ];
+
+            const err = await expect(Iron.unseal(idLess, multi, Iron.defaults)).to.reject('Multiple passwords match id: default');
+            expect(err.isBoom).to.be.true();
+
+            const unsealed = await Iron.unseal(idLess, [{ id: 'alt', secret: password, default: true }], Iron.defaults);
+            expect(unsealed).to.equal(obj);
+        });
+
+        it('rejects a map entry with a conflicting id', async () => {
+
+            const oldToken = await Iron.seal(obj, { id: 'v1', secret: passwords.v1 }, Iron.defaults);
+            const err = await expect(Iron.unseal(oldToken, { v1: { id: 'v2', secret: passwords.v1 } }, Iron.defaults)).to.reject('Conflicting password id: v1');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('rejects an invalid entry purpose', async () => {
+
+            const oldToken = await Iron.seal(obj, { id: 'v1', secret: passwords.v1 }, Iron.defaults);
+            const err = await expect(Iron.unseal(oldToken, [{ id: 'v1', secret: passwords.v1, purpose: 'wiggle' }], Iron.defaults)).to.reject('Invalid password purpose: wiggle');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails to seal with multiple current keys', async () => {
+
+            const keyring = [
+                { id: 'v1', secret: passwords.v1, current: true },
+                { id: 'v2', secret: passwords.v2, current: true }
+            ];
+
+            const err = await expect(Iron.seal(obj, keyring, Iron.defaults)).to.reject('Multiple current passwords');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails to seal without a seal-capable key', async () => {
+
+            const err = await expect(Iron.seal(obj, [rotated[0]], Iron.defaults)).to.reject('No password available for sealing');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails to seal with ambiguous keys', async () => {
+
+            const err = await expect(Iron.seal(obj, { v1: passwords.v1, v2: passwords.v2 }, Iron.defaults)).to.reject('Multiple passwords can seal (mark one as current)');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('seals with the current key of a password map', async () => {
+
+            const sealed = await Iron.seal(obj, { v2: { secret: passwords.v2, current: true } }, Iron.defaults);
+            expect(sealed.split('*')[1]).to.equal('v2');
+
+            const unsealed = await Iron.unseal(sealed, { v2: passwords.v2 }, Iron.defaults);
+            expect(unsealed).to.equal(obj);
+        });
+
+        it('unseals with a single password object', async () => {
+
+            const oldToken = await Iron.seal(obj, { id: 'v1', secret: passwords.v1 }, Iron.defaults);
+            const unsealed = await Iron.unseal(oldToken, { id: 'v1', secret: passwords.v1 }, Iron.defaults);
+            expect(unsealed).to.equal(obj);
+        });
+
+        it('unseals an identified token with a bare password', async () => {
+
+            const oldToken = await Iron.seal(obj, { id: 'v1', secret: passwords.v1 }, Iron.defaults);
+            const unsealed = await Iron.unseal(oldToken, passwords.v1, Iron.defaults);
+            expect(unsealed).to.equal(obj);
+        });
+
+        it('seals and unseals with an unnamed secret object', async () => {
+
+            const sealed = await Iron.seal(obj, { secret: password }, Iron.defaults);
+            const unsealed = await Iron.unseal(sealed, { secret: password }, Iron.defaults);
+            expect(unsealed).to.equal(obj);
+        });
+    });
+
     describe('generateKey()', () => {
 
         it('returns an error when password is missing', async () => {

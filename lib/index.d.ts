@@ -85,6 +85,11 @@ export interface SealOptions {
     Local clock time offset, expressed in number of milliseconds (positive or negative). Defaults to 0.
     */
     localtimeOffsetMsec: number;
+
+    /**
+    When true, sealed tokens without a password id are rejected instead of falling back to the default password. Defaults to false.
+    */
+    requirePasswordId?: boolean;
 }
 
 
@@ -110,10 +115,10 @@ export interface HMacResult {
 /**
 Password secret string or buffer.
 */
-type Password = string | Buffer
+export type Password = string | Buffer
 
 
-declare namespace password {
+export namespace password {
 
     /**
     Secret object with optional id.
@@ -133,12 +138,64 @@ declare namespace password {
     }
 
     /**
+    Keyring entry with rotation metadata.
+    */
+    interface Entry {
+
+        /**
+        Password identifier. Must match the id included in the sealed token.
+        */
+        id?: string,
+
+        /**
+        Password string or key buffer used for both encryption and integrity.
+        */
+        secret?: Password,
+
+        /**
+        Password string or key buffer used for encryption.
+        */
+        encryption?: Password,
+
+        /**
+        Password string or key buffer used for integrity.
+        */
+        integrity?: Password,
+
+        /**
+        Which operations the key is allowed to perform. Defaults to 'both'.
+        */
+        purpose?: 'seal' | 'unseal' | 'both',
+
+        /**
+        Marks the key used to seal new tokens when a keyring is passed to seal(). At most one key can be current.
+        */
+        current?: boolean,
+
+        /**
+        Marks a rotated-out key kept only to unseal existing tokens. Equivalent to purpose 'unseal'.
+        */
+        historical?: boolean,
+
+        /**
+        Allows the key to unseal tokens that do not include a password id. The key with id 'default' is always a default key.
+        */
+        default?: boolean
+    }
+
+    /**
     Key-value pairs hash of password id to value
     */
     interface Hash {
-        [id: string]: Password | Secret | Specific;
+        [id: string]: Password | Secret | Specific | Entry;
     }
 }
+
+
+/**
+A single password or a keyring of password entries used for rotation-aware key selection.
+*/
+export type Keyring = Password | password.Secret | password.Specific | password.Entry | password.Hash | password.Entry[];
 
 
 /**
@@ -221,7 +278,7 @@ Serializes, encrypts, and signs objects into an iron protocol string
 
 @returns Iron sealed string
 */
-export function seal(object: any, password: Password | password.Secret | password.Specific, options: SealOptions): Promise<string>
+export function seal(object: any, password: Keyring, options: SealOptions): Promise<string>
 
 
 /**
@@ -233,4 +290,4 @@ Verifies, decrypts, and reconstruct an iron protocol string into an object
 
 @returns the verified decrypted object
 */
-export function unseal(sealed: string, password: Password | password.Hash, options?: SealOptions): Promise<any>
+export function unseal(sealed: string, password: Keyring, options?: SealOptions): Promise<any>
