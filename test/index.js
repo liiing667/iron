@@ -295,9 +295,13 @@ describe('Iron', () => {
 
         it('returns an error when number of sealed components is wrong', async () => {
 
-            const ticket = 'x*Fe26.2**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M**ff2bf988aa0edf2b34c02d220a45c4a3c572dac6b995771ed20de58da919bfa5*HfWzyJlz_UP9odmXvUaVK1TtdDuOCaezr-TAg2GjBCU';
-            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Incorrect number of sealed components');
+            const current = (await Iron.seal(obj, password, Iron.defaults)).split('*').slice(0, 10).join('*');
+            const legacy = 'Fe26.2**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M**ff2bf988aa0edf2b34c02d220a45c4a3c572dac6b995771ed20de58da919bfa5';
+            const err = await expect(Iron.unseal(current, password, Iron.defaults)).to.reject('Incorrect number of sealed components');
             expect(err.isBoom).to.be.true();
+
+            const legacyErr = await expect(Iron.unseal(legacy, password, Iron.defaults)).to.reject('Incorrect number of sealed components');
+            expect(legacyErr.isBoom).to.be.true();
         });
 
         it('returns an error when password is missing', async () => {
@@ -323,7 +327,7 @@ describe('Iron', () => {
 
         it('returns an error when decryption fails', async () => {
 
-            const macBaseString = 'Fe26.2**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M??*';
+            const macBaseString = Iron.macPrefix + '*iron*aes-256-cbc*sha256**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M??*';
             const options = Hoek.clone(Iron.defaults.integrity);
             options.salt = 'ff2bf988aa0edf2b34c02d220a45c4a3c572dac6b995771ed20de58da919bfa5';
             const mac = await Iron.hmacWithPassword(password, options, macBaseString);
@@ -334,7 +338,7 @@ describe('Iron', () => {
 
         it('returns an error when iv base64 decoding fails', async () => {
 
-            const macBaseString = 'Fe26.2**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw??*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M*';
+            const macBaseString = Iron.macPrefix + '*iron*aes-256-cbc*sha256**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw??*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M*';
             const options = Hoek.clone(Iron.defaults.integrity);
             options.salt = 'ff2bf988aa0edf2b34c02d220a45c4a3c572dac6b995771ed20de58da919bfa5';
             const mac = await Iron.hmacWithPassword(password, options, macBaseString);
@@ -349,16 +353,16 @@ describe('Iron', () => {
             const { encrypted, key } = await Iron.encrypt(password, Iron.defaults.encryption, badJson);
             const encryptedB64 = B64.base64urlEncode(encrypted);
             const iv = B64.base64urlEncode(key.iv);
-            const macBaseString = Iron.macPrefix + '**' + key.salt + '*' + iv + '*' + encryptedB64 + '*';
+            const macBaseString = Iron.macPrefix + '*iron*aes-256-cbc*sha256**' + key.salt + '*' + iv + '*' + encryptedB64 + '*';
             const mac = await Iron.hmacWithPassword(password, Iron.defaults.integrity, macBaseString);
             const ticket = macBaseString + '*' + mac.salt + '*' + mac.digest;
-            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject(/Failed parsing sealed object JSON: Unexpected token a/);
+            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject(/Failed parsing sealed object JSON:/);
             expect(err.isBoom).to.be.true();
         });
 
         it('returns an error when expired', async () => {
 
-            const macBaseString = 'Fe26.2**a38dc7a7bf2f8ff650b103d8c669d76ad219527fbfff3d98e3b30bbecbe9bd3b*nTsatb7AQE1t0uMXDx-2aw*uIO5bRFTwEBlPC1Nd_hfSkZfqxkxuY1EO2Be_jJPNQCqFNumRBjQAl8WIKBW1beF*1380495854060';
+            const macBaseString = Iron.macPrefix + '*iron*aes-256-cbc*sha256**a38dc7a7bf2f8ff650b103d8c669d76ad219527fbfff3d98e3b30bbecbe9bd3b*nTsatb7AQE1t0uMXDx-2aw*uIO5bRFTwEBlPC1Nd_hfSkZfqxkxuY1EO2Be_jJPNQCqFNumRBjQAl8WIKBW1beF*1380495854060';
             const options = Hoek.clone(Iron.defaults.integrity);
             options.salt = 'e4fe33b6dc4c7ef5ad7907f015deb7b03723b03a54764aceeb2ab1235cc8dce3';
             const mac = await Iron.hmacWithPassword(password, options, macBaseString);
@@ -369,13 +373,237 @@ describe('Iron', () => {
 
         it('returns an error when expiration NaN', async () => {
 
-            const macBaseString = 'Fe26.2**a38dc7a7bf2f8ff650b103d8c669d76ad219527fbfff3d98e3b30bbecbe9bd3b*nTsatb7AQE1t0uMXDx-2aw*uIO5bRFTwEBlPC1Nd_hfSkZfqxkxuY1EO2Be_jJPNQCqFNumRBjQAl8WIKBW1beF*a';
+            const macBaseString = Iron.macPrefix + '*iron*aes-256-cbc*sha256**a38dc7a7bf2f8ff650b103d8c669d76ad219527fbfff3d98e3b30bbecbe9bd3b*nTsatb7AQE1t0uMXDx-2aw*uIO5bRFTwEBlPC1Nd_hfSkZfqxkxuY1EO2Be_jJPNQCqFNumRBjQAl8WIKBW1beF*a';
             const options = Hoek.clone(Iron.defaults.integrity);
             options.salt = 'e4fe33b6dc4c7ef5ad7907f015deb7b03723b03a54764aceeb2ab1235cc8dce3';
             const mac = await Iron.hmacWithPassword(password, options, macBaseString);
             const ticket = macBaseString + '*' + mac.salt + '*' + mac.digest;
             const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Invalid expiration');
             expect(err.isBoom).to.be.true();
+        });
+    });
+
+    describe('domain separation', () => {
+
+        const legacyTicket = 'Fe26.2**0cdd607945dd1dffb7da0b0bf5f1a7daa6218cbae14cac51dcbd91fb077aeb5b*aOZLCKLhCt0D5IU1qLTtYw*g0ilNDlQ3TsdFUqJCqAm9iL7Wa60H7eYcHL_5oP136TOJREkS3BzheDC1dlxz5oJ**05b8943049af490e913bbc3a2485bee2aaf7b823f4c41d0ff0b7c168371a3772*R8yscVdTBRMdsoVbdDiFmUL8zb-c3PQLGJn4Y8C-AqI';
+
+        it('seals with the labeled format version', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            expect(sealed.startsWith(Iron.macPrefix + '*')).to.be.true();
+            expect(Iron.macPrefix).to.equal('Fe26.3');
+            expect(sealed.split('*').length).to.equal(11);
+        });
+
+        it('round trips an explicit purpose', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            options.purpose = 'session-cookie';
+
+            const sealed = await Iron.seal(obj, password, options);
+            const identity = Iron.identify(sealed);
+            expect(identity).to.equal({
+                version: '3',
+                purpose: 'session-cookie',
+                encryption: { algorithm: 'aes-256-cbc' },
+                integrity: { algorithm: 'sha256' },
+                passwordId: ''
+            });
+
+            const unsealed = await Iron.unseal(sealed, password, options);
+            expect(unsealed).to.equal(obj);
+        });
+
+        it('round trips a seal whose purpose is configured explicitly on both sides', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            options.purpose = 'explicit-domain';
+
+            const sealed = await Iron.seal(obj, password, options);
+            expect(Iron.identify(sealed).purpose).to.equal('explicit-domain');
+            expect(await Iron.unseal(sealed, password, options)).to.equal(obj);
+        });
+
+        it('falls back to the default purpose when unseal options omit one', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            delete options.purpose;
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            expect(await Iron.unseal(sealed, password, options)).to.equal(obj);
+        });
+
+        it('fails closed when a seal is reused in a different purpose domain', async () => {
+
+            const cookie = Hoek.clone(Iron.defaults);
+            cookie.purpose = 'cookie';
+            const state = Hoek.clone(Iron.defaults);
+            state.purpose = 'state';
+
+            const sealed = await Iron.seal(obj, password, cookie);
+            const err = await expect(Iron.unseal(sealed, password, state)).to.reject('Seal purpose mismatch');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails closed when the purpose label is tampered with', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const parts = sealed.split('*');
+            parts[1] = 'other-domain';
+
+            const err = await expect(Iron.unseal(parts.join('*'), password, Iron.defaults)).to.reject('Seal purpose mismatch');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('rejects an invalid purpose when sealing', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            options.purpose = 'not a domain!';
+
+            const err = await expect(Iron.seal(obj, password, options)).to.reject('Invalid purpose');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails closed when the encryption algorithm label is swapped', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const parts = sealed.split('*');
+            parts[2] = 'aes-128-ctr';
+
+            const err = await expect(Iron.unseal(parts.join('*'), password, Iron.defaults)).to.reject('Seal encryption algorithm mismatch');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails closed when unsealing with a different encryption algorithm', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            options.encryption.algorithm = 'aes-128-ctr';
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const err = await expect(Iron.unseal(sealed, password, options)).to.reject('Seal encryption algorithm mismatch');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails closed when unsealing with a different integrity algorithm', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            options.integrity.algorithm = 'sha512';
+            Iron.algorithms.sha512 = { keyBits: 512, type: 'integrity' };
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const err = await expect(Iron.unseal(sealed, password, options)).to.reject('Seal integrity algorithm mismatch');
+            expect(err.isBoom).to.be.true();
+
+            delete Iron.algorithms.sha512;
+        });
+
+        it('fails closed when the integrity label names an encryption algorithm', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const parts = sealed.split('*');
+            parts[3] = 'aes-256-cbc';
+
+            const err = await expect(Iron.unseal(parts.join('*'), password, Iron.defaults)).to.reject('Algorithm aes-256-cbc cannot be used for integrity');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('fails closed when the encryption label names an integrity algorithm', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const parts = sealed.split('*');
+            parts[2] = 'sha256';
+
+            const err = await expect(Iron.unseal(parts.join('*'), password, Iron.defaults)).to.reject('Algorithm sha256 cannot be used for encryption');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('refuses to seal when an encryption algorithm is assigned the integrity role', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            options.integrity.algorithm = 'aes-256-cbc';
+
+            const err = await expect(Iron.seal(obj, password, options)).to.reject('Algorithm aes-256-cbc cannot be used for integrity');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('refuses to seal when an integrity algorithm is assigned the encryption role', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            options.encryption.algorithm = 'sha256';
+
+            const err = await expect(Iron.seal(obj, password, options)).to.reject('Algorithm sha256 cannot be used for encryption');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('refuses to seal an unknown algorithm', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            options.encryption.algorithm = 'aes-512-xyz';
+
+            const err = await expect(Iron.seal(obj, password, options)).to.reject('Unknown algorithm: aes-512-xyz');
+            expect(err.isBoom).to.be.true();
+        });
+
+        it('unseals a label carrying an unknown algorithm as a mismatch', async () => {
+
+            const sealed = await Iron.seal(obj, password, Iron.defaults);
+            const parts = sealed.split('*');
+            parts[2] = 'aes-512-xyz';
+
+            const err = await expect(Iron.unseal(parts.join('*'), password, Iron.defaults)).to.reject('Unknown algorithm: aes-512-xyz');
+            expect(err.isBoom).to.be.true();
+        });
+
+        describe('identify()', () => {
+
+            it('returns the domain identity of a current seal', async () => {
+
+                const key = { id: 'key1', secret: password };
+                const sealed = await Iron.seal(obj, key, Iron.defaults);
+                expect(Iron.identify(sealed).passwordId).to.equal('key1');
+            });
+
+            it('returns the legacy identity of an unlabeled seal', () => {
+
+                const identity = Iron.identify(legacyTicket);
+                expect(identity.version).to.equal('2');
+                expect(identity.purpose).to.be.null();
+                expect(identity.encryption.algorithm).to.be.null();
+                expect(identity.integrity.algorithm).to.be.null();
+            });
+
+            it('returns null for an unrecognized token', () => {
+
+                expect(Iron.identify('Fe99.1*a*b')).to.be.null();
+                expect(Iron.identify(42)).to.be.null();
+                expect(Iron.identify(Iron.macPrefix + '*only*three')).to.be.null();
+                expect(Iron.identify('Fe26.2*only*two')).to.be.null();
+            });
+        });
+
+        describe('legacy migration', () => {
+
+            it('still unseals a legitimate legacy seal by default', async () => {
+
+                const unsealed = await Iron.unseal(legacyTicket, password, Iron.defaults);
+                expect(unsealed).to.equal(obj);
+            });
+
+            it('fails closed on legacy seals once they are explicitly disabled', async () => {
+
+                const options = Hoek.clone(Iron.defaults);
+                options.acceptLegacy = false;
+
+                const err = await expect(Iron.unseal(legacyTicket, password, options)).to.reject('Legacy seal format is disabled');
+                expect(err.isBoom).to.be.true();
+            });
+
+            it('supports an explicit migration from a legacy seal to the labeled format', async () => {
+
+                const migrated = await Iron.seal(await Iron.unseal(legacyTicket, password, Iron.defaults), password, Iron.defaults);
+                expect(Iron.identify(migrated).version).to.equal('3');
+                expect(await Iron.unseal(migrated, password, Iron.defaults)).to.equal(obj);
+            });
         });
     });
 });

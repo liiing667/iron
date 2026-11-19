@@ -7,8 +7,12 @@ cookies, authentication credentials, etc.), then receive it back and decrypt it.
 ensures that the message was not tampered with, and also provides a simple mechanism for password
 rotation.
 
-Note: the wire protocol has not changed since 1.x (the version increments reflected a change in
-the internal error format used by the module and by the node API as well as other node API changes).
+Note: the wire protocol was extended in mac normalization format version `3` (the sealed string now
+starts with `Fe26.3`). Version `3` adds an authenticated, explicit domain identity to every seal:
+the seal `purpose` and both the encryption and integrity algorithms are written into the string and
+covered by the HMAC. Version `2` seals (`Fe26.2`) remain readable for migration but carry no such
+labels; they can be rejected outright with the `acceptLegacy` option. Set `acceptLegacy` to `false`
+once every legacy seal has been rotated.
 
 **iron** provides methods for encrypting an object, generating a message authentication code (MAC),
 and serializing both into a cookie / URI / HTTP header friendly format. Sealed objects are useful
@@ -27,8 +31,26 @@ The seal process follows these general steps:
 - derive an integrity (HMAC) key `keyI` using `saltI` and the password
 - generate a random [initialization vector](http://en.wikipedia.org/wiki/Initialization_vector) `iv`
 - encrypt the serialized object string using `keyE` and `iv`
-- mac the encrypted object along with `saltE` and `iv`
-- concatenate `saltE`, `saltI`, `iv`, and the encrypted object into a URI-friendly string
+- mac the encrypted object together with the explicit `purpose`, the encryption algorithm, the
+  integrity algorithm, the password id, `saltE` and `iv`
+- concatenate the domain labels, `saltE`, `saltI`, `iv`, and the encrypted object into a
+  URI-friendly string
+
+### Domain separation
+
+Every version `3` seal carries four explicit, HMAC-protected labels:
+
+- `purpose` - the logical domain the seal belongs to (defaults to `'iron'`). A seal produced for one
+  purpose cannot be unsealed under a different purpose.
+- encryption algorithm - the exact symmetric cipher used. It must match the configured
+  `options.encryption.algorithm`.
+- integrity algorithm - the exact HMAC algorithm used. It must match the configured
+  `options.integrity.algorithm`.
+- format version - embedded in the `Fe26.3` prefix.
+
+Each entry in the algorithm matrix also declares the role (`'encryption'` or `'integrity'`) it is
+allowed to serve, so an encryption cipher can never be substituted for the MAC role or vice versa.
+Any label mismatch, role misuse, or tampered label fails closed with an error and never returns data.
 
 ## Example
 
@@ -214,6 +236,35 @@ Return value: an object with the following keys:
 - `digest`
 - `salt`
 
+### `identify(sealed)`
+
+Reads the explicit domain identity carried by a sealed string without requiring any password where:
+- `sealed` - the **iron** protocol string generated with [`seal()`](#await-sealobject-password-options).
+
+Return value: an object describing the seal's identity, or `null` when the input is not a
+recognized **iron** token:
+- `version` - the MAC normalization format version (`'3'` for labeled seals, `'2'` for legacy seals).
+- `purpose` - the domain label, or `null` for a legacy seal.
+- `encryption.algorithm` - the labeled encryption algorithm, or `null` for a legacy seal.
+- `integrity.algorithm` - the labeled integrity algorithm, or `null` for a legacy seal.
+- `passwordId` - the password identifier embedded in the seal.
+
+This makes the fixed algorithm matrix observable on the wire: callers can inspect the domain a seal
+belongs to before attempting to unseal it, and any cross-domain combination is rejected.
+
+### Migrating legacy seals
+
+Version `2` seals are accepted while `acceptLegacy` is `true` (the default). The explicit migration
+path is to unseal each legacy seal and immediately re-seal it, which produces a labeled version `3`
+seal:
+
+```javascript
+const object = await Iron.unseal(legacySealed, password, Iron.defaults);
+const resealed = await Iron.seal(object, password, Iron.defaults);   // now starts with Fe26.3
+```
+
+After all seals have been rotated, set `acceptLegacy: false` so unlabeled seals fail closed.
+
 ## Options
 
 **iron** provides options for customizing the key deriviation algorithm used to generate encryption
@@ -245,6 +296,12 @@ are used:
 
 The _'seal()'_ and _'unseal()'_ methods also support the following options:
 
+- `purpose` - explicit domain label binding a seal to its intended use. Defaults to `'iron'`. The
+  value may contain letters, numbers, `_` and `-`. A seal can only be unsealed when the incoming
+  `purpose` matches the one used to seal it; a seal moved to another purpose domain fails closed.
+- `acceptLegacy` - when `true` (the default), `unseal()` still accepts unlabeled version `2`
+  (`Fe26.2`) seals. Set to `false` to reject any legacy seal and require the labeled version `3`
+  format once migration is finished.
 - `ttl` - sealed object lifetime in milliseconds where 0 means forever. Defaults to `0`.
 - `timestampSkewSec` - number of seconds of permitted clock skew for incoming expirations.
   Defaults to `60` seconds.
@@ -268,6 +325,8 @@ var options = {
         algorithm: 'sha256',
         iterations: 1
     },
+    purpose: 'iron',
+    acceptLegacy: true,
     ttl: 0,
     timestampSkewSec: 60,
     localtimeOffsetMsec: 0

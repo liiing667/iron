@@ -27,6 +27,7 @@ describe('import()', () => {
             'encrypt',
             'generateKey',
             'hmacWithPassword',
+            'identify',
             'macFormatVersion',
             'macPrefix',
             'seal',

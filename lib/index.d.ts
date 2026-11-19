@@ -5,15 +5,18 @@ export interface Algorithms {
     'aes-128-ctr': {
         keyBits: number;
         ivBits: number;
+        type: 'encryption';
     };
 
     'aes-256-cbc': {
         keyBits: number;
         ivBits: number;
+        type: 'encryption';
     };
 
     'sha256': {
         keyBits: number;
+        type: 'integrity';
     };
 }
 
@@ -72,6 +75,18 @@ export interface SealOptions {
     integrity: SealOptionsSub;
 
     /**
+    Explicit domain label binding a seal to its intended use. Defaults to 'iron'.
+    A seal can only be unsealed with the same purpose.
+    */
+    purpose?: string;
+
+    /**
+    Accept seals produced with the unlabeled macFormatVersion '2'. Defaults to true.
+    Set to false to fail closed on legacy seals once migration is complete.
+    */
+    acceptLegacy?: boolean;
+
+    /**
     Sealed object lifetime in milliseconds where 0 means forever. Defaults to 0.
      */
     ttl: number;
@@ -104,6 +119,22 @@ Generated HMAC internal results.
 export interface HMacResult {
     digest: string;
     salt: string;
+}
+
+
+/**
+The explicit domain identity carried by a sealed string.
+*/
+export interface SealIdentity {
+    version: string;
+    purpose: string | null;
+    encryption: {
+        algorithm: string | null;
+    };
+    integrity: {
+        algorithm: string | null;
+    };
+    passwordId: string;
 }
 
 
@@ -163,6 +194,17 @@ export const macFormatVersion: string;
 MAC normalization prefix.
 */
 export const macPrefix: string;
+
+
+/**
+Reads the explicit domain identity (version, purpose, algorithms and password id) carried by a
+sealed string without requiring the password. Returns null when the input is not a recognized token.
+
+@param sealed - The iron protocol string generated with seal()
+
+@returns The domain identity of the seal, or null
+*/
+export function identify(sealed: string): SealIdentity | null
 
 
 /**

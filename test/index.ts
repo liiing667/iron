@@ -127,3 +127,16 @@ Iron.encrypt(password, options, 'hello')
 //expect.error(Iron.unseal('uuddlrlrbabas', password, options))
 //expect.error(Iron.unseal('uuddlrlrbabas', 256, defaults))
 expect.error(Iron.unseal(256, password))
+
+
+// identify()
+
+expect.type<Iron.SealIdentity | null>(Iron.identify('Fe26.3*iron*aes-256-cbc*sha256**s*i*e**si*m'))
+
+const domainDefaults = {
+    ...defaults,
+    purpose: 'session-cookie',
+    acceptLegacy: false
+} as Iron.SealOptions;
+
+expect.type<string>(await Iron.seal('seal_this_string', password, domainDefaults))
