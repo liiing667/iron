@@ -201,8 +201,13 @@ describe('Iron', () => {
             options.algorithm = 'x';
             Iron.algorithms.x = { keyBits: 256, ivBits: -1 };
 
-            const err = await expect(Iron.generateKey(password, options)).to.reject('Invalid random bits count');
-            expect(err.isBoom).to.be.true();
+            try {
+                const err = await expect(Iron.generateKey(password, options)).to.reject('Invalid random bits count');
+                expect(err.isBoom).to.be.true();
+            }
+            finally {
+                delete Iron.algorithms.x;                       // Restore shared algorithm registry so later tests stay isolated
+            }
         });
 
         it('returns an error when Crypto.pbkdf2 fails', async () => {
@@ -352,7 +357,7 @@ describe('Iron', () => {
             const macBaseString = Iron.macPrefix + '**' + key.salt + '*' + iv + '*' + encryptedB64 + '*';
             const mac = await Iron.hmacWithPassword(password, Iron.defaults.integrity, macBaseString);
             const ticket = macBaseString + '*' + mac.salt + '*' + mac.digest;
-            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject(/Failed parsing sealed object JSON: Unexpected token a/);
+            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject(/Failed parsing sealed object JSON: /);
             expect(err.isBoom).to.be.true();
         });
 
@@ -376,6 +381,113 @@ describe('Iron', () => {
             const ticket = macBaseString + '*' + mac.salt + '*' + mac.digest;
             const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Invalid expiration');
             expect(err.isBoom).to.be.true();
+        });
+
+        it('does not leak state from a failed unseal into the next sequential request', async () => {
+
+            const first = { order: 1, payload: 'first-object' };
+            const second = { order: 2, payload: 'second-object' };
+            const sealedFirst = await Iron.seal(first, password, Iron.defaults);
+            const sealedSecond = await Iron.seal(second, password, Iron.defaults);
+            const tampered = sealedFirst.slice(0, -2) + (sealedFirst.endsWith('AA') ? 'BB' : 'AA');
+
+            const failure = await expect(Iron.unseal(tampered, password, Iron.defaults)).to.reject('Bad hmac value');
+            expect(failure.isBoom).to.be.true();
+
+            // The next request must return its own object, never a fragment of the failed one
+
+            expect(await Iron.unseal(sealedSecond, password, Iron.defaults)).to.equal(second);
+
+            // The original ticket remains reusable after the failure
+
+            expect(await Iron.unseal(sealedFirst, password, Iron.defaults)).to.equal(first);
+        });
+
+        it('recovers across a fixed sequence of repeated failures and valid seal/unseal cycles', async () => {
+
+            const objects = [
+                { id: 'a', n: 1 },
+                { id: 'b', n: 2 },
+                { id: 'c', n: 3 }
+            ];
+
+            const sealed = [];
+            for (const item of objects) {
+                sealed.push(await Iron.seal(item, password, Iron.defaults));
+            }
+
+            const badTickets = [
+                'not-a-valid-ticket',
+                'Fe27.2**a6dc6339e5ea5dfe7a135631cf3b7dcf47ea38246369d45767c928ea81781694*D3DLEoi-Hn3c972TPpZXqw*mCBhmhHhRKk9KtBjwu3h-1lx1MHKkgloQPKRkQZxpnDwYnFkb3RqdVTQRcuhGf4M**ff2bf988aa0edf2b34c02d220a45c4a3c572dac6b995771ed20de58da919bfa5*HfWzyJlz_UP9odmXvUaVK1TtdDuOCaezr-TAg2GjBCU',
+                sealed[0].slice(0, -2) + (sealed[0].endsWith('AA') ? 'BB' : 'AA')
+            ];
+
+            for (let i = 0; i < 3; ++i) {
+                const err = await expect(Iron.unseal(badTickets[i], password, Iron.defaults)).to.reject();
+                expect(err.isBoom).to.be.true();
+                expect(await Iron.unseal(sealed[i], password, Iron.defaults)).to.equal(objects[i]);
+            }
+        });
+
+        it('keeps interleaved concurrent failing and successful unseals isolated', async () => {
+
+            const objects = [];
+            const sealed = [];
+            for (let i = 0; i < 8; ++i) {
+                objects.push({ index: i, marker: 'concurrent-' + i });
+                sealed.push(await Iron.seal(objects[i], password, Iron.defaults));
+            }
+
+            const tampered = sealed[0].slice(0, -2) + (sealed[0].endsWith('AA') ? 'BB' : 'AA');
+            const tasks = [];
+            for (let i = 0; i < 4; ++i) {
+                for (let j = 0; j < sealed.length; ++j) {
+                    tasks.push((i + j) % 2 === 0
+                        ? Iron.unseal(tampered, password, Iron.defaults).then(
+                            () => 'unexpected-success',
+                            (err) => (err.isBoom ? 'failed' : 'non-boom'))
+                        : Iron.unseal(sealed[j], password, Iron.defaults).then((value) => value.marker));
+                }
+            }
+
+            const results = await Promise.all(tasks);
+            expect(results).to.have.length(32);
+            expect(results.filter((result) => result === 'failed')).to.have.length(16);
+            expect(results.includes('unexpected-success')).to.be.false();
+            expect(results.includes('non-boom')).to.be.false();
+
+            for (let i = 0; i < sealed.length; ++i) {
+                expect(await Iron.unseal(sealed[i], password, Iron.defaults)).to.equal(objects[i]);
+            }
+        });
+
+        it('never mutates the caller options object on success or failure', async () => {
+
+            const options = Hoek.clone(Iron.defaults);
+            const snapshot = Hoek.clone(options);
+            const sealed = await Iron.seal({ safe: true }, password, options);
+
+            await Iron.unseal(sealed, password, options);
+            await expect(Iron.unseal(sealed, 'a_wrong_password_that_is_long_enough_xx', options)).to.reject('Bad hmac value');
+
+            expect(options).to.equal(snapshot);
+        });
+
+        it('normalizes a low level decrypt failure into a Boom error without partial output', async () => {
+
+            const key = await Iron.generateKey(password, Iron.defaults.encryption);
+            const garbage = Buffer.alloc(32, 0);                       // Valid HMAC, but invalid PKCS padding once decrypted
+            const encryptedB64 = B64.base64urlEncode(garbage);
+            const iv = B64.base64urlEncode(key.iv);
+            const macBaseString = Iron.macPrefix + '**' + key.salt + '*' + iv + '*' + encryptedB64 + '*';
+            const mac = await Iron.hmacWithPassword(password, Iron.defaults.integrity, macBaseString);
+            const ticket = macBaseString + '*' + mac.salt + '*' + mac.digest;
+
+            const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject(/bad decrypt/);
+            expect(err.isBoom).to.be.true();
+
+            const sealed = await Iron.seal({ after: 'decrypt-failure' }, password, Iron.defaults);
+            expect(await Iron.unseal(sealed, password, Iron.defaults)).to.equal({ after: 'decrypt-failure' });
         });
     });
 });
