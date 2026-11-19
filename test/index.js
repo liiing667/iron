@@ -377,5 +377,93 @@ describe('Iron', () => {
             const err = await expect(Iron.unseal(ticket, password, Iron.defaults)).to.reject('Invalid expiration');
             expect(err.isBoom).to.be.true();
         });
+
+        describe('fixed-time expiration', () => {
+
+            const baseTime = Date.UTC(2020, 0, 1);                 // Fixed instant so expiration math is deterministic
+
+            const sealAt = function (ttl) {
+
+                const options = Hoek.clone(Iron.defaults);
+                options.ttl = ttl;
+                options.localtimeOffsetMsec = baseTime - Date.now();
+                return Iron.seal(obj, password, options);
+            };
+
+            const optionsAt = function (sealed, elapsed) {
+
+                const expiration = Number(sealed.split('*')[5]);
+                const options = Hoek.clone(Iron.defaults);
+                options.localtimeOffsetMsec = (expiration + elapsed) - Date.now();
+                return options;
+            };
+
+            it('unseals a normal token with a future expiration and no ttl', async () => {
+
+                const sealed = await sealAt(1000);
+                const unsealed = await Iron.unseal(sealed, password, optionsAt(sealed, -500));
+                expect(unsealed).to.equal(obj);
+
+                const forever = await sealAt(0);
+                const foreverOptions = Hoek.clone(Iron.defaults);
+                foreverOptions.localtimeOffsetMsec = baseTime - Date.now() + 100000;
+                expect(await Iron.unseal(forever, password, foreverOptions)).to.equal(obj);
+            });
+
+            it('accepts a token at the skew boundary and rejects one millisecond past it', async () => {
+
+                const sealed = await sealAt(1000);
+                const skew = Iron.defaults.timestampSkewSec * 1000;
+
+                expect(await Iron.unseal(sealed, password, optionsAt(sealed, skew - 1))).to.equal(obj);
+
+                const err = await expect(Iron.unseal(sealed, password, optionsAt(sealed, skew))).to.reject('Expired seal');
+                expect(err.isBoom).to.be.true();
+            });
+
+            it('fails closed when an old seal is retried after expiration', async () => {
+
+                const sealed = await sealAt(1000);
+
+                expect(await Iron.unseal(sealed, password, optionsAt(sealed, -100))).to.equal(obj);
+
+                const err = await expect(Iron.unseal(sealed, password, optionsAt(sealed, 61000))).to.reject('Expired seal');
+                expect(err.isBoom).to.be.true();
+            });
+
+            it('tracks real elapsed delay with skew disabled', async () => {
+
+                const options = Hoek.clone(Iron.defaults);
+                options.ttl = 50;
+                options.timestampSkewSec = 0;
+                const sealed = await Iron.seal(obj, password, options);
+
+                expect(await Iron.unseal(sealed, password, options)).to.equal(obj);
+
+                await Hoek.wait(70);
+                const err = await expect(Iron.unseal(sealed, password, options)).to.reject('Expired seal');
+                expect(err.isBoom).to.be.true();
+            });
+
+            it('rejects a tampered expiration field with a bad hmac before any time check', async () => {
+
+                const sealed = await sealAt(1000);
+                const parts = sealed.split('*');
+                parts[5] = '0';
+
+                const err = await expect(Iron.unseal(parts.join('*'), password, optionsAt(sealed, -500))).to.reject('Bad hmac value');
+                expect(err.isBoom).to.be.true();
+            });
+
+            it('rejects a malformed ttl field only after authentication', async () => {
+
+                const sealed = await sealAt(1000);
+                const parts = sealed.split('*');
+                parts[5] = 'not_a_number';
+
+                const err = await expect(Iron.unseal(parts.join('*'), password, optionsAt(sealed, -500))).to.reject('Bad hmac value');
+                expect(err.isBoom).to.be.true();
+            });
+        });
     });
 });
